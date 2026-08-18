@@ -201,6 +201,7 @@
 
     <div class="buttons">
       <button id="startButton" class="primary" type="button">Start Camera</button>
+      <button id="returnButton" class="primary" type="button" style="display:none;">Return to Metro</button>
       <button id="closeButton" class="secondary" type="button">Cancel</button>
     </div>
 
@@ -224,7 +225,9 @@
     const video = document.getElementById("video");
     const statusBox = document.getElementById("status");
     const startButton = document.getElementById("startButton");
+    const returnButton = document.getElementById("returnButton");
     const closeButton = document.getElementById("closeButton");
+    let lastScannedValue = "";
 
     function setStatus(message, type) {
       statusBox.textContent = message;
@@ -283,34 +286,16 @@
       const value = String(rawValue || "").trim();
       if (!value) return;
 
+      lastScannedValue = value;
       stopCamera();
-      setStatus("QR code read successfully. Returning to Metro Luxury…", "success");
 
-      // Primary integration path:
-      // The Metro Apps Script portal opens this page in a new window/tab.
-      // We return the QR value to that portal using postMessage.
-      try {
-        if (window.opener && !window.opener.closed) {
-          window.opener.postMessage(
-            {
-              type: "METRO_QR_SCAN",
-              value: value
-            },
-            "*"
-          );
-
-          setTimeout(() => {
-            try { window.close(); } catch (e) {}
-          }, 350);
-
-          return;
-        }
-      } catch (e) {}
-
-      // Fallback if the page was opened directly.
       document.getElementById("manualResult").style.display = "block";
       document.getElementById("scannedValue").value = value;
-      setStatus("QR code read. Return to the Metro portal and scan again from inside the portal.", "success");
+
+      startButton.style.display = "none";
+      returnButton.style.display = "inline-block";
+
+      setStatus("QR code read successfully.", "success");
     }
 
     async function startCamera() {
@@ -416,6 +401,29 @@
     }
 
     startButton.addEventListener("click", startCamera);
+
+    returnButton.addEventListener("click", () => {
+      stopCamera();
+
+      // Safest first-stage return: go back to the Metro page that opened the scanner.
+      // No cross-site script communication is required.
+      if (document.referrer) {
+        try {
+          const ref = new URL(document.referrer);
+          if (ref.protocol === "https:") {
+            window.location.href = document.referrer;
+            return;
+          }
+        } catch (e) {}
+      }
+
+      if (history.length > 1) {
+        history.back();
+        return;
+      }
+
+      setStatus("Return to the Metro portal tab to continue.", "success");
+    });
 
     closeButton.addEventListener("click", () => {
       stopCamera();
