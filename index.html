@@ -291,11 +291,22 @@
 
       document.getElementById("manualResult").style.display = "block";
       document.getElementById("scannedValue").value = value;
-
       startButton.style.display = "none";
       returnButton.style.display = "inline-block";
 
-      setStatus("QR code read successfully.", "success");
+      setStatus("QR code read successfully. Returning to Metro Luxury…", "success");
+
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({type:"METRO_QR_SCAN",value:value},"*");
+          setTimeout(() => {
+            try { window.close(); } catch (e) {}
+          }, 650);
+          return;
+        }
+      } catch (e) {}
+
+      setStatus("QR code read successfully. Tap Return to Metro.", "success");
     }
 
     async function startCamera() {
