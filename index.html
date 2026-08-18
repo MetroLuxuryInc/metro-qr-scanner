@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f141a">
+  <title>Metro Luxury Inc. QR Scanner</title>
+
+  <style>
+    :root{
+      --bg:#0f141a;
+      --panel:#18212b;
+      --text:#f4f7fa;
+      --muted:#aeb8c2;
+      --blue:#2da3d7;
+      --blue-dark:#167cab;
+      --danger:#d92d20;
+      --success:#1f9d55;
+      --border:#344250;
+    }
+
+    *{box-sizing:border-box}
+
+    html,body{
+      margin:0;
+      padding:0;
+      min-height:100%;
+      background:var(--bg);
+      color:var(--text);
+      font-family:Arial,Helvetica,sans-serif;
+    }
+
+    body{
+      min-height:100vh;
+      min-height:100dvh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+    }
+
+    .scanner-shell{
+      width:min(100%,620px);
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:18px;
+      padding:20px;
+      box-shadow:0 18px 50px rgba(0,0,0,.35);
+    }
+
+    .brand{
+      text-align:center;
+      margin-bottom:16px;
+    }
+
+    .brand h1{
+      margin:0;
+      font-size:24px;
+      font-weight:900;
+    }
+
+    .brand p{
+      margin:6px 0 0;
+      color:var(--muted);
+      font-size:14px;
+    }
+
+    .camera-wrap{
+      position:relative;
+      width:100%;
+      aspect-ratio:3/4;
+      max-height:68dvh;
+      border-radius:16px;
+      overflow:hidden;
+      background:#000;
+      border:2px solid var(--border);
+    }
+
+    video{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+    }
+
+    .guide{
+      position:absolute;
+      inset:50% auto auto 50%;
+      width:70%;
+      aspect-ratio:1/1;
+      transform:translate(-50%,-50%);
+      border:3px solid rgba(255,255,255,.92);
+      border-radius:18px;
+      box-shadow:0 0 0 9999px rgba(0,0,0,.28);
+      pointer-events:none;
+    }
+
+    .status{
+      margin-top:14px;
+      padding:12px 14px;
+      border-radius:12px;
+      background:#111820;
+      border:1px solid var(--border);
+      font-size:14px;
+      line-height:1.4;
+      text-align:center;
+      color:var(--muted);
+    }
+
+    .status.success{
+      color:#dff8e8;
+      border-color:var(--success);
+      background:#12311f;
+    }
+
+    .status.error{
+      color:#ffe5e2;
+      border-color:var(--danger);
+      background:#351816;
+    }
+
+    .buttons{
+      display:flex;
+      gap:10px;
+      margin-top:14px;
+      flex-wrap:wrap;
+      justify-content:center;
+    }
+
+    button{
+      border:0;
+      border-radius:10px;
+      padding:12px 16px;
+      font-size:15px;
+      font-weight:800;
+      cursor:pointer;
+    }
+
+    .primary{
+      background:var(--blue);
+      color:#fff;
+    }
+
+    .primary:active{
+      background:var(--blue-dark);
+    }
+
+    .secondary{
+      background:#263443;
+      color:#fff;
+      border:1px solid #465665;
+    }
+
+    .manual-result{
+      margin-top:14px;
+      display:none;
+    }
+
+    .manual-result input{
+      width:100%;
+      padding:12px;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#111820;
+      color:#fff;
+      font-size:14px;
+    }
+
+    .privacy{
+      margin-top:12px;
+      text-align:center;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.4;
+    }
+
+    @media (orientation:landscape) and (max-height:650px){
+      body{align-items:flex-start}
+      .scanner-shell{max-width:900px}
+      .camera-wrap{aspect-ratio:16/9;max-height:62dvh}
+      .guide{width:36%}
+    }
+  </style>
+</head>
+
+<body>
+  <main class="scanner-shell">
+    <div class="brand">
+      <h1>Metro Luxury Inc.</h1>
+      <p>Employee QR Scanner</p>
+    </div>
+
+    <div class="camera-wrap">
+      <video id="video" playsinline muted></video>
+      <div class="guide"></div>
+    </div>
+
+    <div id="status" class="status">
+      Starting camera…
+    </div>
+
+    <div class="buttons">
+      <button id="startButton" class="primary" type="button">Start Camera</button>
+      <button id="closeButton" class="secondary" type="button">Cancel</button>
+    </div>
+
+    <div id="manualResult" class="manual-result">
+      <input id="scannedValue" readonly>
+    </div>
+
+    <div class="privacy">
+      This page only reads the QR code. Employee and payroll data remain in the Metro Luxury portal.
+    </div>
+  </main>
+
+  <script>
+    let stream = null;
+    let scanTimer = null;
+    let canvas = null;
+    let context = null;
+    let scanning = false;
+    let jsQRLoadPromise = null;
+
+    const video = document.getElementById("video");
+    const statusBox = document.getElementById("status");
+    const startButton = document.getElementById("startButton");
+    const closeButton = document.getElementById("closeButton");
+
+    function setStatus(message, type) {
+      statusBox.textContent = message;
+      statusBox.className = "status" + (type ? " " + type : "");
+    }
+
+    function stopCamera() {
+      scanning = false;
+
+      if (scanTimer) {
+        clearInterval(scanTimer);
+        scanTimer = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      if (video) {
+        try { video.pause(); } catch (e) {}
+        video.srcObject = null;
+      }
+    }
+
+    function loadJsQR() {
+      if (typeof window.jsQR === "function") {
+        return Promise.resolve(true);
+      }
+
+      if (jsQRLoadPromise) {
+        return jsQRLoadPromise;
+      }
+
+      jsQRLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
+        script.async = true;
+
+        script.onload = () => {
+          if (typeof window.jsQR === "function") {
+            resolve(true);
+          } else {
+            reject(new Error("QR decoder did not initialize."));
+          }
+        };
+
+        script.onerror = () => reject(new Error("QR decoder could not be loaded."));
+        document.head.appendChild(script);
+      });
+
+      return jsQRLoadPromise;
+    }
+
+    function sendResult(rawValue) {
+      const value = String(rawValue || "").trim();
+      if (!value) return;
+
+      stopCamera();
+      setStatus("QR code read successfully. Returning to Metro Luxury…", "success");
+
+      // Primary integration path:
+      // The Metro Apps Script portal opens this page in a new window/tab.
+      // We return the QR value to that portal using postMessage.
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(
+            {
+              type: "METRO_QR_SCAN",
+              value: value
+            },
+            "*"
+          );
+
+          setTimeout(() => {
+            try { window.close(); } catch (e) {}
+          }, 350);
+
+          return;
+        }
+      } catch (e) {}
+
+      // Fallback if the page was opened directly.
+      document.getElementById("manualResult").style.display = "block";
+      document.getElementById("scannedValue").value = value;
+      setStatus("QR code read. Return to the Metro portal and scan again from inside the portal.", "success");
+    }
+
+    async function startCamera() {
+      stopCamera();
+      setStatus("Requesting camera permission…");
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus("Camera access is not available in this browser.", "error");
+        return;
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        video.setAttribute("playsinline", "");
+        video.muted = true;
+        await video.play();
+
+        scanning = true;
+        setStatus("Point the camera at the employee QR code.");
+
+        // Preferred browser-native QR detection.
+        if ("BarcodeDetector" in window) {
+          try {
+            const detector = new BarcodeDetector({ formats: ["qr_code"] });
+
+            scanTimer = setInterval(async () => {
+              if (!scanning || video.readyState < 2) return;
+
+              try {
+                const codes = await detector.detect(video);
+                if (codes && codes.length) {
+                  const raw = String(codes[0].rawValue || "").trim();
+                  if (raw) sendResult(raw);
+                }
+              } catch (e) {}
+            }, 300);
+
+            return;
+          } catch (e) {
+            // Continue to jsQR fallback.
+          }
+        }
+
+        // Safari/iPhone fallback.
+        await loadJsQR();
+
+        canvas = document.createElement("canvas");
+        context = canvas.getContext("2d", { willReadFrequently: true });
+
+        scanTimer = setInterval(() => {
+          if (!scanning || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+            return;
+          }
+
+          try {
+            const maxWidth = 720;
+            const scale = Math.min(1, maxWidth / video.videoWidth);
+
+            canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+            canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const image = context.getImageData(0, 0, canvas.width, canvas.height);
+
+            const result = window.jsQR(
+              image.data,
+              image.width,
+              image.height,
+              { inversionAttempts: "attemptBoth" }
+            );
+
+            if (result && result.data) {
+              sendResult(result.data);
+            }
+          } catch (e) {}
+        }, 220);
+
+      } catch (error) {
+        stopCamera();
+
+        let message = "Camera could not be started.";
+
+        if (error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")) {
+          message = "Camera permission is blocked. Allow Camera for this site in your browser settings, then tap Start Camera.";
+        } else if (error && (error.name === "NotFoundError" || error.name === "DevicesNotFoundError")) {
+          message = "No camera was found on this device.";
+        } else if (error && error.name === "NotReadableError") {
+          message = "The camera is being used by another app or browser tab.";
+        }
+
+        setStatus(message, "error");
+      }
+    }
+
+    startButton.addEventListener("click", startCamera);
+
+    closeButton.addEventListener("click", () => {
+      stopCamera();
+
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({ type: "METRO_QR_CANCEL" }, "*");
+        }
+      } catch (e) {}
+
+      try { window.close(); } catch (e) {}
+    });
+
+    window.addEventListener("beforeunload", stopCamera);
+
+    // Automatically start because opening this page comes from the user's Scan QR click.
+    startCamera();
+  </script>
+</body>
+</html>
