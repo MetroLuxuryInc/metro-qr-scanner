@@ -220,6 +220,7 @@
     let canvas = null;
     let context = null;
     let scanning = false;
+    let cameraStarting = false;
     let jsQRLoadPromise = null;
 
     const video = document.getElementById("video");
@@ -236,6 +237,7 @@
 
     function stopCamera() {
       scanning = false;
+      cameraStarting = false;
 
       if (scanTimer) {
         clearInterval(scanTimer);
@@ -310,15 +312,31 @@
     }
 
     async function startCamera() {
-      stopCamera();
+      if (cameraStarting || scanning) {
+        return;
+      }
+
+      cameraStarting = true;
+      startButton.disabled = true;
+      startButton.textContent = "Starting Camera…";
       setStatus("Requesting camera permission…");
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        cameraStarting = false;
+        startButton.disabled = false;
+        startButton.textContent = "Start Camera";
         setStatus("Camera access is not available in this browser.", "error");
         return;
       }
 
       try {
+        // Do not stop an already-starting camera request. iPhone Safari/Chrome
+        // can reject the second immediate request as NotReadable/AbortError.
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+        }
+
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: "environment" },
@@ -334,9 +352,11 @@
         await video.play();
 
         scanning = true;
+        cameraStarting = false;
+        startButton.disabled = true;
+        startButton.textContent = "Camera Active";
         setStatus("Point the camera at the employee QR code.");
 
-        // Preferred browser-native QR detection.
         if ("BarcodeDetector" in window) {
           try {
             const detector = new BarcodeDetector({ formats: ["qr_code"] });
@@ -346,6 +366,7 @@
 
               try {
                 const codes = await detector.detect(video);
+
                 if (codes && codes.length) {
                   const raw = String(codes[0].rawValue || "").trim();
                   if (raw) sendResult(raw);
@@ -354,12 +375,9 @@
             }, 300);
 
             return;
-          } catch (e) {
-            // Continue to jsQR fallback.
-          }
+          } catch (e) {}
         }
 
-        // Safari/iPhone fallback.
         await loadJsQR();
 
         canvas = document.createElement("canvas");
@@ -395,16 +413,30 @@
         }, 220);
 
       } catch (error) {
-        stopCamera();
+        scanning = false;
+        cameraStarting = false;
+
+        if (stream) {
+          try { stream.getTracks().forEach(track => track.stop()); } catch (e) {}
+          stream = null;
+        }
+
+        try {
+          video.pause();
+          video.srcObject = null;
+        } catch (e) {}
+
+        startButton.disabled = false;
+        startButton.textContent = "Try Camera Again";
 
         let message = "Camera could not be started.";
 
         if (error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")) {
-          message = "Camera permission is blocked. Allow Camera for this site in your browser settings, then tap Start Camera.";
+          message = "Camera permission is blocked. Allow Camera for this site, then tap Try Camera Again.";
         } else if (error && (error.name === "NotFoundError" || error.name === "DevicesNotFoundError")) {
           message = "No camera was found on this device.";
-        } else if (error && error.name === "NotReadableError") {
-          message = "The camera is being used by another app or browser tab.";
+        } else if (error && (error.name === "NotReadableError" || error.name === "AbortError")) {
+          message = "The camera was interrupted. Tap Try Camera Again once.";
         }
 
         setStatus(message, "error");
@@ -450,8 +482,9 @@
 
     window.addEventListener("beforeunload", stopCamera);
 
-    // Automatically start because opening this page comes from the user's Scan QR click.
-    startCamera();
+    // On iPhone, wait for the explicit Start Camera tap. This avoids two
+    // overlapping camera requests when the page opens and the user taps the button.
+    setStatus("Tap Start Camera to scan the employee QR code.");
   </script>
 </body>
 </html>
